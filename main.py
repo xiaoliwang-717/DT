@@ -1,9 +1,14 @@
 import numpy as np
 import pandas as pd
 import seaborn as sns
+# import matplotlib.pyplot as plt
+# from scipy.interpolate import interp1d
 import sklearn.model_selection as ms
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import StackingRegressor
+from sklearn.linear_model import LinearRegression, RidgeCV, LassoCV
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.feature_selection import SelectKBest, mutual_info_regression
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor as XGBR
@@ -65,14 +70,40 @@ gbr_params = [{
     'loss': ['squared_error'],
 }]
 
+params = {
+    'ridge__alpha': [0.1, 1.0, 10.0]
+    }
+
 models = {
     'LR': LinearRegression(),
     'DT':ms.GridSearchCV(DecisionTreeRegressor(random_state=1), dt_params, cv=3),
-    'RF': ms.GridSearchCV(RandomForestRegressor(random_state=1), rf_params, cv=3),
-    'GBR': ms.GridSearchCV(GradientBoostingRegressor(random_state=1), gbr_params, cv=3),
-    'XGBR': ms.GridSearchCV(XGBR(),xgb_params, cv=3),
+    # 'RF': ms.GridSearchCV(RandomForestRegressor(random_state=1), rf_params, cv=3),
+    # 'GBR': ms.GridSearchCV(GradientBoostingRegressor(random_state=1), gbr_params, cv=3),
+    # 'XGBR': ms.GridSearchCV(XGBR(),xgb_params, cv=3),
     'SVR':ms.GridSearchCV(SVR(),svr_params, cv=3),
 }
+
+estimators = [
+    ('LR', LinearRegression()),
+    ('ridge', RidgeCV()),
+    # ('lasso', LassoCV(random_state=42)),
+    # ('knr', KNeighborsRegressor(n_neighbors=20,
+    #                             metric='euclidean')),
+    ('svr_lin', SVR(kernel='linear', gamma='auto')),
+    ('svr_rbf', SVR(kernel='rbf', gamma='auto')),
+    ('DT', ms.GridSearchCV(DecisionTreeRegressor(random_state=1), dt_params, cv=3)),
+    # ('RF', ms.GridSearchCV(RandomForestRegressor(random_state=1), rf_params, cv=3)),
+    # ('SVR', ms.GridSearchCV(SVR(), svr_params, cv=3))
+]
+final_layer_rfr = ms.GridSearchCV(RandomForestRegressor(random_state=1), rf_params, cv=3)
+final_layer_xgb = ms.GridSearchCV(GradientBoostingRegressor(random_state=1), gbr_params, cv=3)
+
+final_layer = StackingRegressor(
+    estimators=[
+        ('rf', final_layer_rfr),
+        ('xgb', final_layer_xgb)
+    ]
+)
 
 def fit_models(x_train,y_train):
     mfit = {model: models[model].fit(x_train, y_train) for model in models.keys()}
@@ -81,11 +112,9 @@ def fit_models(x_train,y_train):
     # b_score = {model: models[model].best_score_ for model in models.keys()}
     # print(b_score)
 
-
 def derive_positions(x_test):
     for model in models.keys():
         answer['pre'+model] = models[model].predict(x_test)
-        round(answer['pre'+model])
 
 def get_answer():
     effect = pd.DataFrame(columns = ['model','MSE','MAE','RMSE','R2'])
@@ -114,10 +143,22 @@ if __name__ == "__main__":
 
     # remove some features
     # 'Adensity','AC_material_weight','TD_weight','Measure_Velocity','Overpressure'
-    # df = df.drop(columns=['Adensity','AC_material_weight','TD_weight','Measure_Velocity','Overpressure'])
+    df = df.drop(columns=['Adensity','AC_material_weight','TD_weight','Measure_Velocity','Overpressure'])
 
     # normalize X
     data_norm = df.iloc[:, :-1].apply(normalize_zscore)
+    data_norm['React_Efficiency'] = df['React_Efficiency']
+
+    # feature selection
+    X = data_norm.iloc[:, :-1].values
+    y = data_norm['React_Efficiency'].values
+    mi = mutual_info_regression(X, y)
+    selector = SelectKBest(mutual_info_regression, k=5)
+    X_new = selector.fit_transform(X, y)
+    selected_features_idx = selector.get_support(indices=True)
+
+    # new data_norm after selected features
+    data_norm = data_norm.iloc[:, selected_features_idx]
     data_norm['React_Efficiency'] = df['React_Efficiency']
 
     # partition train_data and test_data according to the weight of w: [0, 10, 25, 50, 75]
@@ -129,35 +170,63 @@ if __name__ == "__main__":
     i = 0
     for w in W_list:
         train_data, test_data, x_axis = train_test_split(df, data_norm, w)
-        X_train = train_data['Impact_Temp_Rise']
-        X_train = X_train.to_numpy().reshape(-1, 1)
+        X_train = train_data.drop(columns=['React_Efficiency'])
+        # X_train = train_data.to_numpy()
         y_train = train_data['React_Efficiency']
-        # y_train = y_train.to_numpy().reshape(-1, 1)
-        X_test = test_data['Impact_Temp_Rise']
-        X_test = X_test.to_numpy().reshape(-1, 1)
-        y_test = test_data['React_Efficiency']
-        # y_test = y_test.to_numpy().reshape(-1, 1)
-        x_axis = x_axis['Impact_Temp_Rise']
-        x_axis = x_axis.to_numpy()
+        # y_train = y_train.to_numpy()
 
-        fit_models(X_train, y_train)
+        X_test = test_data.drop(columns=['React_Efficiency'])
+        # X_test = X_test.to_numpy()
+
+        # X_tmp = np.arange(300, 2000, 1)
+        # X_test = normalize_zscore(X_tmp).reshape(-1, 1)
+
+        y_test = test_data['React_Efficiency']
+        # y_test = y_test.to_numpy()
+        # x_axis = x_axis['Impact_Temp_Rise']     # no normalized data
+        # x_axis = x_axis.to_numpy()
         answer = pd.DataFrame()
+        fit_models(X_train, y_train)
         derive_positions(X_test)
         get_answer()
         for k, v in models.items():
             gt = y_test
             x = range(len(gt))
             preds = answer['pre' + k]
-            eval(x, gt, preds, k, w, save_fig=True)
-            # eval(x, gt, preds, k,save_fig=True)
-            preds_result.loc[i] = [k, w, x_axis, np.array(gt), np.array(preds)]
+            eval(x, gt, preds, k, w, save_fig=False)
+            # preds_result.loc[i] = [k, w, x_axis, np.array(gt), np.array(preds)]
             i += 1
 
-    columns_to_transform = ['x', 'gt', 'preds']
-    for col in columns_to_transform:
-        preds_result[col] = preds_result[col].apply(lambda x: ', '.join(map(str, x)))
+        # predict by ensemble model
+        sclf = StackingRegressor(
+            estimators=estimators,
+            final_estimator=final_layer
+        )
 
-    preds_result.to_excel('result/preds.xlsx', index=False)
+        sclf.fit(X_train, y_train)
+        en_pred = sclf.predict(X_test)
+        eval(x, gt, en_pred, 'Ensemble', w, save_fig=False)
+
+    #     preds_result.loc[i+1] = ['Ensemble', w, x_axis, np.array(gt), np.array(en_pred)]
+    # columns_to_transform = ['x', 'gt', 'preds']
+    # for col in columns_to_transform:
+    #     preds_result[col] = preds_result[col].apply(lambda x: ', '.join(map(str, x)))
+    #
+    # preds_result.to_excel('result/preds.xlsx', index=False)
+
+
+
+    """
+    # X_tmp = np.arange(300, 2000, 1)
+    # X_test = normalize_zscore(X_tmp).reshape(-1, 1)
+    
+    # interp_func = interp1d(X_tmp, preds, kind='linear')
+    # X_tmp = np.linspace(min(X_tmp), max(X_tmp), 100)
+    # y_interp = interp_func(X_tmp)
+    # _, ax = plt.subplots()
+    # ax.plot(X_tmp, y_interp)
+    # plt.show()
+    """
 
 
 
