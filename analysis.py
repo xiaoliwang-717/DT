@@ -4,6 +4,8 @@
 1. install requirements.txt
 2. See TODO.
 """
+import pickle
+
 import pandas as pd
 import numpy as np
 from omnixai.data.tabular import Tabular
@@ -13,6 +15,7 @@ from omnixai.preprocessing.tabular import TabularTransform
 from omnixai.explainers.tabular import TabularExplainer
 from omnixai.visualization.dashboard import Dashboard
 from omnixai.explainers.prediction import PredictionAnalyzer
+from utils import train_test_split
 
 
 # normalize function z_score
@@ -23,14 +26,6 @@ def normalize_zscore(column):
 def normalize_minmax(column):
     return (column - column.min()) / column.max()-column.min()
 
-def train_test_split(df, data_norm, num):
-    # split according to rate of W
-    test_data = pd.concat([data_norm.iloc[Ti_group[num][0]:Ti_group[num][1]], data_norm.iloc[Zr_group[num][0]:Zr_group[num][1]]])
-    x_axis = pd.concat([df.iloc[Ti_group[num][0]:Ti_group[num][1]], df.iloc[Zr_group[num][0]:Zr_group[num][1]]])
-    select_test_indices = list(range(Ti_group[num][0], Ti_group[num][1])) + list(range(Zr_group[num][0], Zr_group[num][1]))
-    train_data = data_norm.drop(select_test_indices)
-    return train_data, test_data, x_axis
-
 df = pd.read_csv("./data.csv")
 # print(df)
 # remove some features
@@ -39,7 +34,17 @@ df = df.drop(columns=['Adensity','AC_material_weight','TD_weight','Measure_Veloc
 
 # normalize X
 data_norm = df.iloc[:, :-1].apply(normalize_zscore)
+
+# initialize
+model_num = 69
+model_info = pd.read_excel("./result/model.xlsx")
+w = model_info.loc[model_num, "W_ratio"]
+features = [i for i in data_norm.columns.values if i in model_info.loc[model_num, "features"]]
+name = model_info.loc[model_num, "model"]
+
+data_norm = data_norm.loc[:, features]
 data_norm['React_Efficiency'] = df['React_Efficiency']
+
 
 # partition train_data and test_data according to the weight of w: [0, 10, 25, 50, 75]
 Ti_group = {0: [0, 6], 10: [6, 12], 25: [12, 19], 50: [19, 27], 75: [27, 34]}
@@ -49,7 +54,7 @@ preds_result = pd.DataFrame(columns=['model', 'W_ratio', 'x', 'gt', 'preds'])
 
 # TODO: 这里是将我们的数据转换为OMNIXAI的表格类。很简单，把我们预测的那一项放在target_columns就行
 tabular_data = Tabular(
-    df,
+    data_norm,
     target_column='React_Efficiency'
 )
 
@@ -58,18 +63,18 @@ tabular_data = Tabular(
 transformer = TabularTransform().fit(tabular_data)
 class_names = transformer.class_names
 # TODO: 这里是将表格数据转换成训练矩阵的形式。
-x = transformer.transform(tabular_data)
+# x = transformer.transform(tabular_data)
 # Split into training and test datasets
-train, test, train_labels, test_labels = \
-    sklearn.model_selection.train_test_split(x[:, :-1], x[:, -1], train_size=0.80)
+train, train_labels, test, test_labels = train_test_split(df, data_norm, w)
 # TODO: 训练好的模型放在这里。可以接一个接口进来。
-model = Lasso()
-model.fit(train, train_labels)
+with open(f'./result/W{w} {name} {str(len(features))}features {model_num}.pickle', 'rb') as file:
+    model = pickle.load(file)
+model.fit(train.values, train_labels)
 
 # 这里是将训练数据转换称为解释库的表格数据，这一步很重要，为了分析用。
 # Convert the transformed data back to Tabular instances
-train_data = transformer.invert(train)
-test_data = transformer.invert(test)
+train_data = transformer.invert(train.values)
+test_data = transformer.invert(test.values)
 
 
 
@@ -97,7 +102,7 @@ global_explanations = explainer.explain_global(
 analyzer = PredictionAnalyzer(
     mode="regression",
     test_data=test_data,                           # The test dataset (a `Tabular` instance)
-    test_targets=test_labels,                      # The test labels (a numpy array)
+    test_targets=test_labels.values,                      # The test labels (a numpy array)
     model=model,                                   # The ML model
     preprocess=lambda z: transformer.transform(z)  # Converts raw features into the model inputs
 )
