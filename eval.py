@@ -17,9 +17,10 @@ def eval(x: list,
     ax.plot(x, preds, preds_marker, label='preds')
     ax.scatter(x, gt, c='black', marker=gt_marker, label='gt')
     ax.legend()
-    plt.title("W"+str(w)+" "+name)
+    plt.title(f'W{str(w)} {name}')
     if save_fig:
         plt.savefig(f'result/W{str(w)} {name}.png', format='png')
 
     else:
         plt.show()
+    plt.close()

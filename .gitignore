@@ -1,2 +1,5 @@
 data.csv
 adult.data
+result
+ipynb_checkpoints
+__pycache__
