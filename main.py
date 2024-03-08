@@ -44,7 +44,9 @@ def xlsx_to_csv_pd():
 
 # normalize function z_score
 def normalize_zscore(column):
-    return (column - column.mean()) / column.std()
+    # print(column.mean(), column.std())
+    # return (column - column.mean()) / column.std()
+    return (column - 1500.0) / 865.7366805212772
 
 
 # normalize function min-max
@@ -74,26 +76,32 @@ params = {
 }
 
 
-def fit_models(x_train, y_train):
-    mfit = {model: models[model].fit(x_train, y_train) for model in models.keys()}
-    b_params = {model: models[model].best_params_ for model in models.keys()}
-    print(b_params)
-    b_score = {model: models[model].best_score_ for model in models.keys()}
-    print(b_score)
-    return [(model, models[model].best_estimator_) for model in models.keys()]
+def fit_models(models_list, x_train, y_train, verbose=False):
+    mfit = {model: models_list[model].fit(x_train, y_train) for model in models_list.keys()}
+    b_params = {model: models_list[model].best_params_ for model in models_list.keys()}
+    b_score = {model: models_list[model].best_score_ for model in models_list.keys()}
+    
+    if verbose:
+        print(b_score)
+        print(b_params)
+    
+    print(f"In fit function: {id(models_list)}")
+    return [(model, models_list[model].best_estimator_) for model in models_list.keys()]
 
-def derive_positions(x_test, y_test, w, features):
-    for model in models.keys():
+def derive_positions(models_list, x_test, y_test, w, features, new_bee):
+    for model in models_list.keys():
         num = preds_result.shape[0]
-        preds_result.loc[num] = [model, w, features, list(y_test), list(models[model].predict(x_test)), 0, 0, 0,
+        preds_result.loc[num] = [model, w, features, list(y_test), list(models_list[model].predict(x_test)), new_bee, 0, 0, 0,
                                                    0]
-        with open(f'./result/W{w} {model} {str(len(features))}features {num}.pickle', 'wb') as file:
-            pickle.dump(models[model], file)
+        # with open(f'./result/W{w} {model} {str(len(features))}features {num}.pickle', 'wb') as file:
+        #     pickle.dump(models_list[model], file)
 
-def derive_prediction(x_test, w, features):
-    for model in models.keys():
+def derive_prediction(models_list, x_test, w, features):
+    print(f"In predict function: {id(models_list)}")
+    # print(x_test.shape)
+    for model in models_list.keys():
         num = preds_result.shape[0]
-        preds_result.loc[num] = [model, w, features, None, list(models[model].predict(x_test)), 0, 0, 0,
+        preds_result.loc[num] = [model, w, features, None, list(models_list[model].predict(x_test)), 0, 0, 0,
                                                    0]
 
 def array_to_string(arr):
@@ -114,6 +122,8 @@ def generate_test(scope:list,
                   q:float):
     start, stop = scope[0], scope[1]+1
     Impact_temp = np.arange(start, stop, step).reshape(-1, 1)
+    # x = np.arange(start, stop, step).reshape(-1, 1)
+    # Impact_temp = np.cos(x).reshape(-1, 1)
     Impact_temp = normalize_zscore(Impact_temp)
     CEP_Q = np.full_like(Impact_temp, Q, dtype=float)
     CEP_q = np.full_like(Impact_temp, q, dtype=float)
@@ -200,6 +210,9 @@ if __name__ == "__main__":
 
     # normalize X
     data_norm = df.iloc[:, :-1].apply(normalize_zscore)
+    # 600 800 900 1200
+    # 600 - 1800 -> z
+    # data_norm = df.iloc[:, :-1]
     data_norm['React_Efficiency'] = df['React_Efficiency']
     # print(data_norm.head(5))
 
@@ -207,16 +220,16 @@ if __name__ == "__main__":
     X = data_norm.iloc[:, :-1].values
     y = data_norm['React_Efficiency'].values
     mi = mutual_info_regression(X, y)
-    selector1 = SelectKBest(mutual_info_regression, k=5)    # select 5 features
+    # selector1 = SelectKBest(mutual_info_regression, k=5)    # select 5 features
     # selector2 = SelectKBest(mutual_info_regression, k=3)
-    selector1.fit_transform(X, y)
+    # selector1.fit_transform(X, y)
     # selector2.fit_transform(X, y)
     # selected_features_idx_1 = selector1.get_support(indices=True)
     selected_features_idx_1 = [10, 11, 14]
     # selected_features_idx_2 = selector2.get_support(indices=True)
     # Only Temp Rise
     selected_features_idx_3 = [14]
-    preds_result = pd.DataFrame(columns=['model', 'W_ratio', 'features', 'gt', 'preds', 'MSE', 'MAE', 'RMSE', 'R2'])
+    preds_result = pd.DataFrame(columns=['model', 'W_ratio', 'features', 'gt', 'preds', 'new_bee', 'MSE', 'MAE', 'RMSE', 'R2'])
 
     # for selected_features_idx in [selected_features_idx_2, selected_features_idx_3]:
     for selected_features_idx in [selected_features_idx_1]:
@@ -240,31 +253,35 @@ if __name__ == "__main__":
             for w in W_list[l]:
                 models = {
                     # 'SGD': GridSearchCV(SGDRegressor(random_state=0, max_iter=100000), params['SGD'], cv=3),
-                    'ElasticNet': GridSearchCV(ElasticNet(random_state=0, max_iter=10000000), params['ElasticNet'], cv=3),
-                    'LassoLars': GridSearchCV(LassoLars(random_state=0, normalize=False), params['LassoLars'], cv=3),
-                    'LassoLarsIC': GridSearchCV(LassoLarsIC(normalize=False), params['LassoLarsIC'], cv=3),
-                    'OMP': GridSearchCV(OrthogonalMatchingPursuit(normalize=False), params['OMP'], cv=3),
-                    'ARD': GridSearchCV(ARDRegression(), params['ARD'], cv=3),
-                    'Bayes': GridSearchCV(BayesianRidge(), params['Bayes'], cv=3),
+                    'ElasticNet': GridSearchCV(ElasticNet(random_state=0, max_iter=10000000), params['ElasticNet'], cv=3, n_jobs=-1),
+                    'LassoLars': GridSearchCV(LassoLars(random_state=0, normalize=False), params['LassoLars'], cv=3, n_jobs=-1),
+                    'LassoLarsIC': GridSearchCV(LassoLarsIC(normalize=False), params['LassoLarsIC'], cv=3, n_jobs=-1),
+                    'OMP': GridSearchCV(OrthogonalMatchingPursuit(normalize=False), params['OMP'], cv=3, n_jobs=-1),
+                    'ARD': GridSearchCV(ARDRegression(), params['ARD'], cv=3, n_jobs=-1),
+                    'Bayes': GridSearchCV(BayesianRidge(), params['Bayes'], cv=3, n_jobs=-1),
                 }
+                print(f"--------------------w={str(w)+' '+ L_list[l]}--------------------")
+                
+                print(f"In init function: {id(models)}")
 
-                # X_train, y_train, X_test, y_test = train_test_split(df, s_data_norm, l, w)
+                # X_train, y_train, X_test, y_test, Impact_Temp_Rise = train_test_split(df, s_data_norm, l, w)
+                # print(X_test.head())
                 # X_test 和 X_train划分不改变，但是X_test 变更为 对单项材料冲击温升在[300,2000]范围内变化的预测
-                X_train, y_train, value, _ = train_test_split(df, s_data_norm, l, w)
+                X_train, y_train, value, y_test, new_bee = train_test_split(df, s_data_norm, l, w)
 
                 # TODO 新的test dat
-                X_test = generate_test([300, 2000], 1, value[0], value[1])
+                X_test = generate_test([600, 1800], 1, value[0], value[1])
                 columns = ["CEP_Q", "CEP_q", "Impact_Temp_Rise"]
                 X_test = pd.DataFrame(X_test, columns=columns)
-                print(X_test)
+                # print(X_test)
 
-                print(f"--------------------w={str(w)+' '+ L_list[l]}--------------------")
+                
                 # integrate with best models
-                estimators = fit_models(X_train, y_train)
+                estimators = fit_models(models, X_train, y_train)
                 # select models
                 estimators = select_integrate(estimators, ['ElasticNet', 'ARD', 'OMP', 'LassoLars'])
                 # derive_positions(X_test, y_test, str(w)+' '+L_list[l], features=X_train.columns.values)
-
+                
                 # TODO: 训练好的模型放在这里。可以接一个接口进来。
                 # with open(f'./result/W{"75"} {"Zr"} {"Stacking"} {"3"}features {"19"}.pickle', 'rb') as file:
                 #     model = pickle.load(file)
@@ -273,18 +290,25 @@ if __name__ == "__main__":
                 params["Stacking"] = [{
                     'final_estimator': [ElasticNet(random_state=0, max_iter=1000000), None]
                 }]
-                models = {'Stacking': GridSearchCV(StackingRegressor(estimators=estimators), params["Stacking"], cv=3)}
-                fit_models(X_train, y_train)
-
-                derive_prediction(X_test, str(w) + ' ' + L_list[l], features=X_train.columns.values)
-                # derive_positions(X_test, y_test, str(w)+' '+L_list[l], features=X_train.columns.values)
-
+                # new_models = {'Stacking': GridSearchCV(StackingRegressor(estimators=estimators), params["Stacking"], cv=3)}
+                # new_models = {'Stacking': StackingRegressor(estimators=estimators, final_estimator=ElasticNet(random_state=0, max_iter=100))}
+                nnn = [('ElasticNet', ElasticNet(alpha=0.1, l1_ratio=1, max_iter=10000000, random_state=0)), ('LassoLars', LassoLars(alpha=0.1, normalize=False, random_state=0)), ('OMP', OrthogonalMatchingPursuit(normalize=False)), ('ARD', ARDRegression())]
+                stacking = StackingRegressor(estimators=nnn, final_estimator=ElasticNet(random_state=42, max_iter=int(1e7)), n_jobs=-1)
+                stacking.fit(X_train, y_train)
+                # es_ = fit_models(new_models, X_train, y_train)
+                # stacking_models = {k:v for (k,v) in es_}
+                stacking_models = {'stacking': stacking}
+        
+                # derive_prediction(stacking_models, X_test, str(w) + ' ' + L_list[l], features=X_train.columns.values)
+                derive_positions(stacking_models, X_test, y_test, str(w)+' '+L_list[l], X_train.columns.values, new_bee)
+                break
 
         for ind, row in preds_result.iterrows():
-            # gt = row["gt"]
+            gt = row["gt"]
+            nb = row['new_bee']
             # x = range(len(gt))
             # TODO：给定test data 后的预测结果分析
-            x = np.arange(300, 2001, 1)
+            x = np.arange(600, 1801, 1)
             preds = row["preds"]
             w = row["W_ratio"]
             feature_num = str(len(row["features"]))
@@ -295,8 +319,10 @@ if __name__ == "__main__":
             # preds_result.loc[ind, "R2"] = r2_score(gt, preds)
 
             name = row["model"] + " " + feature_num + "feature"
-            # eval(x, gt, preds, name, w, save_fig=True)
-            eval_new(x, preds, name, w, save_fig=True)
+            eval(x, nb, gt, preds, name, w, save_fig=True)
+            # eval_new(Impact_Temp_Rise, preds, name, w, save_fig=True)
+            # eval_new(x, preds, name, w, save_fig=True)
+            
         preds_result.to_excel('./result/model.xlsx')
             # preds_result.loc[i] = [k, w, x_axis, np.array(gt), np.array(preds)]
             # i += 1
