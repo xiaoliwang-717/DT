@@ -3,3 +3,5 @@ adult.data
 result
 ipynb_checkpoints
 __pycache__
+Data
+.DS_Store

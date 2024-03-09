@@ -36,9 +36,9 @@ def train_test_split(df, data_norm, l, num):
     value2 = test_data['CEP_q']
     value2 = value2.values[0]
 
-    print(value1, value2)
+    # print(value1, value2)
 
-    return X_train, y_train, [value1, value2], y_test
-    # return X_train, y_train, test_data, y_test
+    return X_train, y_train, [value1, value2], y_test, x_axis['Impact_Temp_Rise']
+    # return X_train, y_train, X_test, y_test, x_axis['Impact_Temp_Rise']
 
 
